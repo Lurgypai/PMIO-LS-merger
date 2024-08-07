@@ -189,3 +189,23 @@ void MergeThread::StartMergeThread(const std::string targetFilename,
 void MergeThread::StopMergeThread() {
     keepMerging = false;    
 }
+
+extern "C" void start_merge_thread(const char* fileName,
+        char** metadataFileNames,
+        char** dataFileNames,
+        int fileCount,
+        const char* outDataFileName,
+        int maxChunkInUseCount, int maxMasterItemCount, int stripeSize) {
+    std::vector<std::string> metadataNameVec, dataNameVec;
+    for(int i = 0; i != fileCount; ++i) {
+        metadataNameVec.emplace_back(metadataFileNames[i]);
+        dataNameVec.emplace_back(metadataFileNames[i]);
+    }
+
+    MergeThread::StartMergeThread(fileName, metadataNameVec, dataNameVec,
+            outDataFileName, maxChunkInUseCOunt, maxMasterItemCount, stripeSize);
+}
+
+extern "C" void stop_merge_thread() {
+    MergeThread::StopMergeThread();
+}
