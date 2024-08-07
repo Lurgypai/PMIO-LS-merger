@@ -1,6 +1,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <fstream>
+#include <filesystem>
 #include <algorithm>
 
 #include <vector>
@@ -11,7 +12,8 @@
 static bool keepMerging = true;
 static Merger MasterMerger{2048};
 
-static void WriteFromMasterMerger(std::fstream& inputFile, std::ofstream& outputFile) {
+static void WriteFromMasterMerger(std::fstream& inputFile, std::ofstream& outputFile, const std::string& inName) {
+
     std::vector<char> buffer;
     for(auto& item : MasterMerger.getItems()) {
         // there should only be one
@@ -20,11 +22,16 @@ static void WriteFromMasterMerger(std::fstream& inputFile, std::ofstream& output
         buffer.resize(item.getLength()); 
         inputFile.seekg(logItem.item.data_offset);
         inputFile.read(buffer.data(), item.getLength());
+
+        std::string data{buffer.data(), buffer.size()};
+
+        // std::cout << "Copying from " << logItem.item.data_offset << " to " << logItem.item.target_offset << " value " << data << '\n';
         
         outputFile.seekp(logItem.item.target_offset);
         outputFile.write(buffer.data(), item.getLength());
     }
     MasterMerger.clear();
+    std::filesystem::resize_file(inName, 0);
 };
 
 
@@ -57,7 +64,7 @@ void MergeThread::StartMergeThread(const std::string targetFilename,
         dataFiles.emplace(dataFilename, std::move(file));
     }
 
-    std::fstream outDataFile{outDataFilename, std::ios::in | std::ios::out | std::ios::trunc};
+    std::fstream outDataFile{outDataFilename};
     if(!outDataFile.good()) {
         std::cerr << "Unable to open out data file \"" << outDataFilename << "\"\n";
         return;
@@ -92,7 +99,7 @@ void MergeThread::StartMergeThread(const std::string targetFilename,
             auto endIndex = currChunkEndIndices[metadataFileNum];
             int usedChunks = endIndex - startIndex;
             if(usedChunks < 0) usedChunks = (M_CHUNK_COUNT - startIndex) + endIndex;
-            std::cout << "current used chunks " << usedChunks << '\n';
+            // std::cout << "current used chunks " << usedChunks << '\n';
 
             if(usedChunks > maxChunkInUseCount) {
                 doMerge = true;
@@ -104,7 +111,7 @@ void MergeThread::StartMergeThread(const std::string targetFilename,
         }
 
         if(!doMerge) continue;
-        std::cout << "Merging thread triggered merging\n";
+        // std::cout << "Merging thread triggered merging\n";
 
         // how do we update the start chunk pointer while merging?
         //  add cleaning to the merge process (freeing of used)
@@ -148,48 +155,13 @@ void MergeThread::StartMergeThread(const std::string targetFilename,
 
         // std::cout << "Logging MasterMerger from sub merge\n";
         // MasterMerger.debugLog();
-        WriteFromMasterMerger(outDataFile, outFile);
+        WriteFromMasterMerger(outDataFile, outFile, outDataFilename);
 
         outFile.close();
-
-        /*
-        //find stripe aligned IO
-        auto& items = MasterMerger.getItems();
-        int offset = items[0].getBaseOffset();
-        int remain = offset % stripeSize;
-        if(remain != 0) offset += stripeSize - remain;
-        
-        
-        for(auto iter = items.begin(); iter != items.end();) {
-            if(iter->getLength() < stripeSize) continue;
-            // insert before if necessary
-            if(offset > iter->getBaseOffset()) {
-                iter = items.insert(iter, MergerItem{m_item{iter->getDataOffset(), iter->getBaseOffset()}, outDataFilename, iter->getBaseOffset() - offset});
-                ++iter;
-            }
-            // set to the second half
-            auto newBegin = offset + stripeSize;
-            auto end = iter->getBaseOffset() + iter->getLength();
-            iter->setLength(end - newBegin);
-
-            // if empty
-            if(iter->getLength() == 0) {
-                iter = items.erase(iter);
-                continue;
-            }
-
-            // finish setting if not empty 
-            // 
-            int translation = newBegin - iter->getBaseOffset();
-            iter->setBaseOffset(newBegin);
-            iter->setDataOffset(iter->getDataOffset() + translation);
-            ++iter;
-        }
-        */
     }
 
 
-    std::cout << "Comitting flush merge\n";
+    // std::cout << "Comitting flush merge\n";
     Merger subMerger = MergeFiles(metadataFileNames, dataFileNames, outDataFilename);
     // std::cout << "logging subMerger from flush merge\n";
     // subMerger.debugLog();
@@ -207,7 +179,7 @@ void MergeThread::StartMergeThread(const std::string targetFilename,
 
     // std::cout << "Logging MasterMerger before final merge\n";
     // MasterMerger.debugLog();
-    WriteFromMasterMerger(outDataFile, outFile);
+    WriteFromMasterMerger(outDataFile, outFile, outDataFilename);
 
     outFile.close();
     outDataFile.close();

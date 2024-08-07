@@ -32,11 +32,12 @@ Merger MergeFiles(const std::vector<std::string>& sourceLogFiles,
         }
 
         void* dataAddr = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_SHARED, fileNo, 0);
-        std::vector<m_chunk> chunks;
-        chunks.resize(M_CHUNK_COUNT);
-        memcpy(chunks.data(), dataAddr, chunks.size() * sizeof(m_chunk));
+        // std::vector<m_chunk> chunks;
+        // chunks.resize(M_CHUNK_COUNT);
+        // memcpy(chunks.data(), dataAddr, chunks.size() * sizeof(m_chunk));
 
-        for(auto& chunk : chunks) {
+        for(int chunkNum = 0; chunkNum != M_CHUNK_COUNT; ++chunkNum) {
+            auto& chunk = static_cast<m_chunk*>(dataAddr)[chunkNum];
             if(chunk.free) continue;
             if(chunk.item_count != M_ITEM_COUNT) break; //the final chunk is the only one that could be partially filled
             for(int item_num = 0; item_num != chunk.item_count; ++item_num) {
@@ -48,11 +49,10 @@ Merger MergeFiles(const std::vector<std::string>& sourceLogFiles,
         close(fileNo);
     }
     merger.mergeAll();
-
     // merger.debugLog();
 
     // d-log merge
-    std::ofstream mergedDataOut{mergedDataFile};
+    std::ofstream mergedDataOut{mergedDataFile, std::ios::app | std::ios::out};
     if(!mergedDataOut.good()) {
         std::cerr << "Error opening merged data output file...\n";
         throw std::exception{};
@@ -88,7 +88,7 @@ Merger MergeFiles(const std::vector<std::string>& sourceLogFiles,
             targetSourceFile.seekg(logItem.item.data_offset);
             targetSourceFile.read(buffer.data(), length);
 
-            // std::cout << "Copying data from " << logItem.item.data_offset << " to " << mergedDataOut.tellp() << " length " << length << '\n';
+            // std::cout << "Copying data from " << logItem.item.data_offset << " in " << logItem.sourceDataFile << " to " << mergedDataOut.tellp()  << " in " << mergedDataFile << " length " << length << '\n';
             mergedDataOut.write(buffer.data(), length);
         }
 
@@ -96,8 +96,9 @@ Merger MergeFiles(const std::vector<std::string>& sourceLogFiles,
         logItems.clear(); 
         logItems.emplace_back(TaggedItem{m_item{item.getDataOffset(), item.getBaseOffset()}, mergedDataFile});
     }
-    return merger;
 
+    mergedDataOut.close();
+    return merger;
 }
 
 Merger::Merger(std::size_t initialBackingSize) {
@@ -105,10 +106,13 @@ Merger::Merger(std::size_t initialBackingSize) {
 }
 
 void Merger::addItem(const m_item& item, const std::string& sourceDataFile, uint64_t length) {
-    // std::cout << "Creating new merge item:\n";
-    // std::cout << "\titem.target_offset: " << item.target_offset << '\n';
-    // std::cout << "\tlength: " << length << '\n';
-    // std::cout << "\tsourceDataFile: " << sourceDataFile << '\n';
+    /*
+    std::cout << "Creating new merge item:\n";
+    std::cout << "\titem.target_offset: " << item.target_offset << '\n';
+    std::cout << "\titem.data_offset: " << item.data_offset << '\n';
+    std::cout << "\tlength: " << length << '\n';
+    std::cout << "\tsourceDataFile: " << sourceDataFile << '\n';
+    */
 
     MergerItem newMergerItem = MergerItem{item, sourceDataFile, length};
 
