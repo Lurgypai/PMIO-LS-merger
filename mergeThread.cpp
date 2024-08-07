@@ -203,7 +203,7 @@ extern "C" void start_merge_thread(const char* fileName,
     }
 
     MergeThread::StartMergeThread(fileName, metadataNameVec, dataNameVec,
-            outDataFileName, maxChunkInUseCOunt, maxMasterItemCount, stripeSize);
+            outDataFileName, maxChunkInUseCount, maxMasterItemCount, stripeSize);
 }
 
 extern "C" void stop_merge_thread() {
