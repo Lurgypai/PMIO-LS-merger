@@ -10,4 +10,8 @@ void start_merge_thread(const char* fileName,
 
 void stop_merge_thread();
 
+void pause_merge_thread();
+
+void unpause_merge_thread();
+
 #endif

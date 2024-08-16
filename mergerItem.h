@@ -2,7 +2,6 @@
 #define MERGER_ITEM_H
 
 #include <vector>
-#include <string>
 
 #include <cstdint>
 
@@ -11,7 +10,7 @@
 // associates an item with its source datafile
 struct TaggedItem {
     m_item item;
-    std::string sourceDataFile;
+    void* sourceData;
 
     bool operator<(const TaggedItem& other) const;
 };
@@ -27,7 +26,7 @@ struct TaggedItem {
 // is there a default?
 class MergerItem {
 public:
-    MergerItem(const m_item& startingItem, const std::string& sourceDataFile, uint64_t length);
+    MergerItem(const m_item& startingItem, void* sourceData, uint64_t length);
     
     // this item comes before the other in the file
     bool operator<(const MergerItem& other) const;

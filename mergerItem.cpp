@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <iterator>
 #include <vector>
-#include <iostream>
 
 #include "mergerItem.h"
 
@@ -9,10 +8,10 @@ bool TaggedItem::operator<(const TaggedItem& other) const {
     return item.target_offset < other.item.target_offset;
 }
 
-MergerItem::MergerItem(const m_item& startingItem, const std::string& sourceDataFile, uint64_t length_) :
+MergerItem::MergerItem(const m_item& startingItem, void* sourceData, uint64_t length_) :
     length{length_},
     offset{startingItem.target_offset},
-    items{TaggedItem{startingItem, sourceDataFile}}
+    items{TaggedItem{startingItem, sourceData}}
 {}
 
 bool MergerItem::operator<(const MergerItem& other) const {

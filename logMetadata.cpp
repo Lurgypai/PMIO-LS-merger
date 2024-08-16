@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
         std::cout << "chunk.free: " << chunk.free << '\n';
         std::cout << "chunk.item_count: " << chunk.item_count << '\n';
         std::cout << "chunk.req_len: " << chunk.req_len << '\n';
+        std::cout << "chunk.next_chunk: " << chunk.next_chunk << '\n';
         for(int curItemI = 0; curItemI != chunk.item_count; ++curItemI) {
             auto& item = chunk.items[curItemI];
             std::cout << "\tITEM\n";

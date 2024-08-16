@@ -3,14 +3,15 @@
 
 #include <cstring>
 #include <vector>
+#include <fstream>
 #include "mergerItem.h"
 
 class Merger {
 public:
     explicit Merger(std::size_t initialBackingSize);
     // may leave item in a "moved from" state
-    void addItem(const m_item& item, const std::string& sourceDataFile, uint64_t length);
-    void addItemNoMerge(const m_item& item, const std::string& sourceDataFile, uint64_t length);
+    void addItem(const m_item& item, void* data, uint64_t length);
+    void addItemNoMerge(const m_item& item, void* data, uint64_t length);
     void mergeAll();
     void clear();
 
@@ -24,8 +25,10 @@ private:
 };
 
 // returns the newly merged merger
-Merger MergeFiles(const std::vector<std::string>& sourceLogFiles,
-        const std::vector<std::string>& sourceDataFiles,
-        const std::string& mergedDataFile);
+Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
+        const std::vector<void*>& sourceData,
+        const std::vector<int>& leadingChunks, const std::vector<int>& endChunks,
+        void* outData, int& curOutOffset, int maxSize,
+        std::ofstream& fileOut);
 
 #endif

@@ -11,6 +11,21 @@
 
 #include "merger.h"
 
+static void* mapFile(const std::string& filename) {
+    int file = open(filename.c_str(), O_RDWR, 0666);
+    if(file < 0) {
+        std::cerr << "Error opening file \"" << filename << "\"\n";
+        perror("Error:");
+    }
+    void* data = mmap(NULL, M_CHUNK_COUNT * sizeof(m_chunk), PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+    if(data == MAP_FAILED) {
+        std::cerr << "Error mapping file \"" << filename << "\"\n";
+        perror("Error:");
+    }
+    close(file);
+    return data;
+}
+
 int main(int argc, char** argv) {
     std::vector<std::string> dataFiles;
     std::vector<std::string> metadataFiles;
@@ -44,7 +59,25 @@ int main(int argc, char** argv) {
     std::cout << "\noutMetadataFile: " << outMetadataFile << "\noutDataFile: " << outDataFile << '\n';
     */
 
-    Merger merger = MergeFiles(metadataFiles, dataFiles, outDataFile);
+    std::vector<m_chunk*> metadata = std::vector<m_chunk*>(metadataFiles.size(), nullptr);
+    for(int i = 0; i != metadata.size(); ++i) {
+        metadata[i] = static_cast<m_chunk*>(mapFile(metadataFiles[i]));
+    }
+
+    std::vector<void*> data = std::vector<void*>(dataFiles.size(), nullptr);
+    for(int i = 0; i != data.size(); ++i) {
+        data[i] = mapFile(dataFiles[i]);
+    }
+
+    void* outData = mapFile(outDataFile);
+
+    std::vector<int> startIndices = std::vector<int>(dataFiles.size(), 0);
+    std::vector<int> endIndices = std::vector<int>(dataFiles.size(), M_CHUNK_COUNT);
+    
+    int curEndOffset = 0;
+
+    Merger merger = MergeData(metadata, data, startIndices, endIndices,
+            outData, curEndOffset);
 
     // write out metadata (not done because normally this stays in memory)
     std::vector<m_chunk> outChunks = std::vector<m_chunk>(M_CHUNK_COUNT, m_chunk{});

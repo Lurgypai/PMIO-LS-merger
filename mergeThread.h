@@ -10,6 +10,8 @@ namespace MergeThread {
             std::vector<std::string> dataFileNames,
             const std::string outDataFilename,
             int maxChunkInUseCount, int maxMasterItemCount, int stripeSize);
+    void PauseMergeThread();
+    void UnpauseMergeThread();
     void StopMergeThread();
 }
 

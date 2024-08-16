@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <fstream>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -6,98 +7,101 @@
 
 #include <iostream>
 #include <algorithm>
-#include <fstream>
-#include <unordered_map>
+#include <vector>
 
 #include "merger.h"
 
-Merger MergeFiles(const std::vector<std::string>& sourceLogFiles,
-        const std::vector<std::string>& sourceDataFiles,
-        const std::string& mergedDataFile) {
+Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
+        const std::vector<void*>& sourceData,
+        const std::vector<int>& leadingChunks, const std::vector<int>& endChunks,
+        void* outData, int& curOutOffset, int maxSize,
+        std::ofstream& fileOut) {
+
     Merger merger{2048};
 
-    // std::cout << "MergeFIles triggered. Outputting merged to \"" << mergedDataFile << "\"\n";
-
     // m-log merge
-    for(int currFile = 0; currFile != sourceLogFiles.size(); ++currFile) {
-        auto& sourceLogFile = sourceLogFiles[currFile];
-        auto& sourceDataFile = sourceDataFiles[currFile];
-        // std::cout << "Opening file " << sourceLogFile << '\n';
+    for(int i = 0; i != sourceMetadata.size(); ++i) {
+        auto& chunks = sourceMetadata[i];
+        auto& data = sourceData[i];
+        auto leadingChunk = leadingChunks[i];
+        auto endChunk = endChunks[i];
+        auto chunkCount = endChunk - leadingChunk;
+        if(chunkCount < 0) chunkCount = (M_CHUNK_COUNT - leadingChunk) + endChunk;
 
-        int fileNo = open(sourceLogFile.c_str(), O_RDWR);
-        int length = lseek(fileNo, 0, SEEK_END);
-        if(length < 0) {
-            perror("Unable to open file");
-            throw std::exception{};
-        }
+        /* DEBUG */
+        // std::cout << "merger.cpp: Adding items from chunks " << leadingChunk << " to " << endChunk << ", " << chunkCount << " chunks.\n";
+        // int actualChunkCount = 0;
+        /* END DEBUG */
 
-        void* dataAddr = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_SHARED, fileNo, 0);
-        // std::vector<m_chunk> chunks;
-        // chunks.resize(M_CHUNK_COUNT);
-        // memcpy(chunks.data(), dataAddr, chunks.size() * sizeof(m_chunk));
+        for(int j = 0; j != chunkCount; ++j) {
+            auto& chunk = chunks[(leadingChunk + j) % M_CHUNK_COUNT];
+            if(chunk.free) continue; //this shouldn't happen when running
 
-        for(int chunkNum = 0; chunkNum != M_CHUNK_COUNT; ++chunkNum) {
-            auto& chunk = static_cast<m_chunk*>(dataAddr)[chunkNum];
-            if(chunk.free) continue;
-            if(chunk.item_count != M_ITEM_COUNT) break; //the final chunk is the only one that could be partially filled
+            /* DEBUG */
+            // ++actualChunkCount;
+            /* END DEBUG */
+
             for(int item_num = 0; item_num != chunk.item_count; ++item_num) {
-                merger.addItem(chunk.items[item_num], sourceDataFile, chunk.req_len);
+                merger.addItem(chunk.items[item_num], data, chunk.req_len);
             }
             chunk.free = 1;
         }
 
-        close(fileNo);
+        // std::cout << "merger.cpp: Actual chunk count for this iteration was " << actualChunkCount << '\n';
     }
     merger.mergeAll();
     // merger.debugLog();
-
-    // d-log merge
-    std::ofstream mergedDataOut{mergedDataFile, std::ios::app | std::ios::out};
-    if(!mergedDataOut.good()) {
-        std::cerr << "Error opening merged data output file...\n";
-        throw std::exception{};
-    }
 
     /*
      * for each item
      *  for each log item in item
      *      copy data from data file to output data file
      */
-    std::unordered_map<std::string, std::ifstream> dataFiles;
-    for(auto& dataFile : sourceDataFiles) {
-        std::ifstream file{dataFile};
-        if(!file.good()) continue;
-        dataFiles.emplace(std::pair<std::string, std::ifstream>{dataFile, std::move(file)});
-    }
 
-    if(dataFiles.size() != sourceDataFiles.size()) {
-        std::cerr << "Error, unable to open one or more data files\n";
-        throw std::exception{};
-    }
+    // std::cout << "merger.cpp: merging data...\n";
+    auto& items = merger.getItems();
+    for(auto iter = items.begin(); iter != items.end(); ++iter) {
+        /*
+         * if (curOutOffset + item.getLength() > maxOutSize) 
+         *      for each item before this item
+         *          destage the item to final storage
+         *          remove it from the merger
+         */
 
-    std::vector<char> buffer;
-    for(auto& item : merger.getItems()) {
-        item.setDataOffset(mergedDataOut.tellp());
+        auto& item = *iter;
+        if(curOutOffset + item.getLength() > maxSize) {
+            for(auto jter = items.begin(); jter != iter; ++jter) {
+                auto& subItem = jter->getLogItems()[0];
+                fileOut.seekp(jter->getBaseOffset());
+                fileOut.write(static_cast<char*>(subItem.sourceData), jter->getLength());
+            }
+
+            // remove items
+            // update length/base/data DONT NEED TO we're taking out an entire element
+        }
+
+        item.setDataOffset(curOutOffset);
 
         auto& logItems = item.getLogItems();
         int length = item.getLength() / logItems.size();
         for(const auto& logItem : logItems) {
-            auto& targetSourceFile = dataFiles[logItem.sourceDataFile];
 
-            buffer.resize(length);
-            targetSourceFile.seekg(logItem.item.data_offset);
-            targetSourceFile.read(buffer.data(), length);
+            /*
+            std::cout << "\tcopying from " << logItem.sourceData << " + " << logItem.item.data_offset <<
+                            " to " << outData << " + " << curOutOffset <<
+                            ", data is " << *(static_cast<int*>(logItem.sourceData) + logItem.item.data_offset / 4) << '\n';
+                            */
+            std::memcpy(static_cast<char*>(outData) + curOutOffset,
+                    static_cast<char*>(logItem.sourceData) + logItem.item.data_offset,
+                    length);
 
-            // std::cout << "Copying data from " << logItem.item.data_offset << " in " << logItem.sourceDataFile << " to " << mergedDataOut.tellp()  << " in " << mergedDataFile << " length " << length << '\n';
-            mergedDataOut.write(buffer.data(), length);
+            curOutOffset += length;
         }
 
         // now that all of the items are meregd, update to the new backing item
         logItems.clear(); 
-        logItems.emplace_back(TaggedItem{m_item{item.getDataOffset(), item.getBaseOffset()}, mergedDataFile});
+        logItems.emplace_back(TaggedItem{m_item{item.getDataOffset(), item.getBaseOffset()}, outData});
     }
-
-    mergedDataOut.close();
     return merger;
 }
 
@@ -105,33 +109,33 @@ Merger::Merger(std::size_t initialBackingSize) {
     items.reserve(initialBackingSize);
 }
 
-void Merger::addItem(const m_item& item, const std::string& sourceDataFile, uint64_t length) {
+void Merger::addItem(const m_item& item, void* data, uint64_t length) {
+    
     /*
     std::cout << "Creating new merge item:\n";
     std::cout << "\titem.target_offset: " << item.target_offset << '\n';
     std::cout << "\titem.data_offset: " << item.data_offset << '\n';
     std::cout << "\tlength: " << length << '\n';
-    std::cout << "\tsourceDataFile: " << sourceDataFile << '\n';
+    std::cout << "\tsourceData: " << data << '\n';
     */
 
-    MergerItem newMergerItem = MergerItem{item, sourceDataFile, length};
+    MergerItem newMergerItem = MergerItem{item, data, length};
 
     auto foundItemIter = std::lower_bound(items.begin(), items.end(), newMergerItem);
 
     // not contained
     if(foundItemIter == items.end() || *foundItemIter != newMergerItem) {
-        // std::cout << "No mergeable items found, adding new\n";
+        // std::cout << "==!! No mergeable items found, adding new\n";
         items.emplace(foundItemIter, std::move(newMergerItem));
         return;
     }
 
-    // contained
-    // std::cout << "Found mergeable item, merging\n";
+    // std::cout << "==!! Mergeable item found! Merging.\n";
     foundItemIter->merge(newMergerItem);
 }
 
-void Merger::addItemNoMerge(const m_item& item, const std::string& sourceDataFile, uint64_t length) {
-    MergerItem newMergerItem = MergerItem{item, sourceDataFile, length}; 
+void Merger::addItemNoMerge(const m_item& item, void* data, uint64_t length) {
+    MergerItem newMergerItem = MergerItem{item, data, length}; 
 
     auto foundItemIter = std::lower_bound(items.begin(), items.end(), newMergerItem);
     items.emplace(foundItemIter, std::move(newMergerItem)); 
@@ -166,7 +170,7 @@ void Merger::debugLog() const {
         for(const auto& subItem : currItem.getLogItems()) {
             std::cout << "\tSource Offset: " << subItem.item.data_offset << '\n';
             std::cout << "\tTarget Offset: " << subItem.item.target_offset << '\n';
-            std::cout << "\tSource Filename: " << subItem.sourceDataFile << '\n';
+            std::cout << "\tSource Data: " << subItem.sourceData << '\n';
         }
         std::cout << "]\n";
     }
