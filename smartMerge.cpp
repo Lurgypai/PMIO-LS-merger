@@ -33,6 +33,8 @@ int main(int argc, char** argv) {
     std::string outDataFile;
     std::string outMetadataFile;
 
+    std::string outFile;
+
     std::string activeFlag = "";
     for(int argNum = 0; argNum != argc; ++argNum) {
         std::string currArg{argv[argNum]};
@@ -48,6 +50,9 @@ int main(int argc, char** argv) {
         }
         else if (activeFlag == "--outMetadataFile") {
             outMetadataFile = std::move(currArg);
+        }
+        else if (activeFlag == "--outFile") {
+            outFile = std::move(currArg);
         }
     }
     
@@ -76,8 +81,10 @@ int main(int argc, char** argv) {
     
     int curEndOffset = 0;
 
+    std::ofstream out{outFile};
+
     Merger merger = MergeData(metadata, data, startIndices, endIndices,
-            outData, curEndOffset);
+            outData, curEndOffset, 131072, out);
 
     // write out metadata (not done because normally this stays in memory)
     std::vector<m_chunk> outChunks = std::vector<m_chunk>(M_CHUNK_COUNT, m_chunk{});

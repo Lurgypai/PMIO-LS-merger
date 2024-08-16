@@ -170,7 +170,7 @@ static void StartMergeThread_(const std::string targetFilename,
 
         std::cout << "mergeThread.cpp: Merging triggered within loop.\n";
         Merger subMerger = MergeData(metadata, data, currChunkStartIndices, currChunkEndIndices,
-                outData, curOutOffset);
+                outData, curOutOffset, 131072, outFile);
         std::cout << "mergeThread.cpp: Merging complete.\n";
         // subMerger.debugLog();
 
@@ -206,7 +206,7 @@ static void StartMergeThread_(const std::string targetFilename,
     std::vector<int> endIndices = std::vector<int>(dataFileNames.size(), M_CHUNK_COUNT);
 
     Merger subMerger = MergeData(metadata, data, startIndices, endIndices,
-            outData, curOutOffset);
+            outData, curOutOffset, 131072, outFile);
     std::cout << "mergeThread.cpp: Merging complete.\n";
     // subMerger.debugLog();
 
