@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <fstream>
+#include <iterator>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -14,12 +15,13 @@
 Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
         const std::vector<void*>& sourceData,
         const std::vector<int>& leadingChunks, const std::vector<int>& endChunks,
-        void* outData, int& curOutOffset, int maxSize,
+        void* outData, int& curOutOffset, int maxDataSize,
         std::ofstream& fileOut) {
 
     Merger merger{2048};
 
     // m-log merge
+    std::cout << "merger.cpp: Merging metadata...\n";
     for(int i = 0; i != sourceMetadata.size(); ++i) {
         auto& chunks = sourceMetadata[i];
         auto& data = sourceData[i];
@@ -42,14 +44,16 @@ Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
             /* END DEBUG */
 
             for(int item_num = 0; item_num != chunk.item_count; ++item_num) {
-                merger.addItem(chunk.items[item_num], data, chunk.req_len);
+                merger.addItem(chunk.items[item_num], data, chunk.req_len, maxDataSize);
             }
             chunk.free = 1;
         }
 
         // std::cout << "merger.cpp: Actual chunk count for this iteration was " << actualChunkCount << '\n';
     }
-    merger.mergeAll();
+    std::cout << "merger.cpp: mergeAll on " << merger.getItems().size() << " items." << std::endl;
+    merger.mergeAll(maxDataSize);
+    std::cout << "merger.cpp: Metadata merge complete.\n";
     // merger.debugLog();
 
     /*
@@ -58,26 +62,27 @@ Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
      *      copy data from data file to output data file
      */
 
-    // std::cout << "merger.cpp: merging data...\n";
+    std::cout << "merger.cpp: Merging data...\n";
     auto& items = merger.getItems();
     for(auto iter = items.begin(); iter != items.end(); ++iter) {
-        /*
-         * if (curOutOffset + item.getLength() > maxOutSize) 
-         *      for each item before this item
-         *          destage the item to final storage
-         *          remove it from the merger
-         */
 
         auto& item = *iter;
-        if(curOutOffset + item.getLength() > maxSize) {
+
+        // check for full buffer
+        // std::cout << "New write to " << curOutOffset << " + " << item.getLength() << " / " << maxDataSize;
+        if(curOutOffset + item.getLength() > maxDataSize) {
+            std::cout << "Buffer full, triggered early destage.\n";
             for(auto jter = items.begin(); jter != iter; ++jter) {
                 auto& subItem = jter->getLogItems()[0];
                 fileOut.seekp(jter->getBaseOffset());
                 fileOut.write(static_cast<char*>(subItem.sourceData), jter->getLength());
             }
+            iter = items.erase(items.begin(), iter);
+            item = *iter;
 
-            // remove items
-            // update length/base/data DONT NEED TO we're taking out an entire element
+            if(item.getLength() > maxDataSize) std::cout << "merger.cpp: WARNING: Large item detected.\n";
+            
+            curOutOffset = 0;
         }
 
         item.setDataOffset(curOutOffset);
@@ -102,6 +107,7 @@ Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
         logItems.clear(); 
         logItems.emplace_back(TaggedItem{m_item{item.getDataOffset(), item.getBaseOffset()}, outData});
     }
+    std::cout << "merger.cpp: Data merge complete.\n";
     return merger;
 }
 
@@ -109,7 +115,7 @@ Merger::Merger(std::size_t initialBackingSize) {
     items.reserve(initialBackingSize);
 }
 
-void Merger::addItem(const m_item& item, void* data, uint64_t length) {
+void Merger::addItem(const m_item& item, void* data, uint64_t length, int maxDataSize) {
     
     /*
     std::cout << "Creating new merge item:\n";
@@ -131,7 +137,9 @@ void Merger::addItem(const m_item& item, void* data, uint64_t length) {
     }
 
     // std::cout << "==!! Mergeable item found! Merging.\n";
-    foundItemIter->merge(newMergerItem);
+    // only merge if the merged output isn't larger than the entire data buffer
+    if(foundItemIter->getLength() + newMergerItem.getLength() <= maxDataSize) foundItemIter->merge(newMergerItem);
+    else items.emplace(foundItemIter, std::move(newMergerItem));
 }
 
 void Merger::addItemNoMerge(const m_item& item, void* data, uint64_t length) {
@@ -141,16 +149,18 @@ void Merger::addItemNoMerge(const m_item& item, void* data, uint64_t length) {
     items.emplace(foundItemIter, std::move(newMergerItem)); 
 }
 
-void Merger::mergeAll() {
-    for(auto iter = items.begin(); iter != items.end();) {
+void Merger::mergeAll(int maxSize) {
+    for(auto iter = items.rbegin(); iter != items.rend();) {
         auto prevIter = iter++;
         // one item
-        if(iter == items.end()) return;
+        if(iter == items.rend()) return;
 
-        if(*prevIter == *iter) {
-            prevIter->merge(*iter);
-            items.erase(iter);
-            iter = prevIter;
+        std::cout << "Attempting to merge " << iter->getBaseOffset() << " + " << iter->getLength() <<
+                    " onto " << prevIter->getBaseOffset() << '\n';
+
+        if(*prevIter == *iter && prevIter->getLength() + iter->getLength() <= maxSize) {
+            iter->merge(*prevIter);
+            iter = std::make_reverse_iterator(items.erase(iter.base()));
         }
     }
 }

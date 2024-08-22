@@ -2,6 +2,8 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
+#include <algorithm>
 
 #include <cstring>
 
@@ -11,13 +13,16 @@
 
 #include "merger.h"
 
-static void* mapFile(const std::string& filename) {
-    int file = open(filename.c_str(), O_RDWR, 0666);
+static void* mapFile(const std::string& filename, int size, bool trunc) {
+    int flags = O_RDWR;
+    if(trunc) flags |= O_CREAT | O_TRUNC;
+    int file = open(filename.c_str(), flags, 0666);
     if(file < 0) {
         std::cerr << "Error opening file \"" << filename << "\"\n";
         perror("Error:");
     }
-    void* data = mmap(NULL, M_CHUNK_COUNT * sizeof(m_chunk), PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+    if(trunc) ftruncate(file, size);
+    void* data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
     if(data == MAP_FAILED) {
         std::cerr << "Error mapping file \"" << filename << "\"\n";
         perror("Error:");
@@ -27,23 +32,22 @@ static void* mapFile(const std::string& filename) {
 }
 
 int main(int argc, char** argv) {
-    std::vector<std::string> dataFiles;
-    std::vector<std::string> metadataFiles;
+
+    std::string bufferFolder;
 
     std::string outDataFile;
     std::string outMetadataFile;
 
     std::string outFile;
 
+    int maxDataSize = 131072;
+
     std::string activeFlag = "";
     for(int argNum = 0; argNum != argc; ++argNum) {
         std::string currArg{argv[argNum]};
         if(currArg[0] == '-') activeFlag = currArg;
-        else if(activeFlag == "--dataFiles") {
-            dataFiles.emplace_back(std::move(currArg));
-        }
-        else if(activeFlag == "--metadataFiles") {
-            metadataFiles.emplace_back(std::move(currArg));
+        else if(activeFlag == "--bufferFolder") {
+            bufferFolder = std::move(currArg);
         }
         else if (activeFlag == "--outDataFile") {
             outDataFile = std::move(currArg);
@@ -54,27 +58,44 @@ int main(int argc, char** argv) {
         else if (activeFlag == "--outFile") {
             outFile = std::move(currArg);
         }
+        else if(activeFlag == "--maxDataSize") {
+            maxDataSize = std::stoi(currArg);
+        }
     }
+
+    std::vector<std::string> metadataFiles;
+    std::vector<std::string> dataFiles;
+
+    namespace fs = std::filesystem;
+    for(const auto& dirent : fs::directory_iterator(bufferFolder)) {
+        std::string filename = dirent.path().filename();
+        if(filename.find("metadata-log") != std::string::npos &&
+                filename.find("merged") == std::string::npos) metadataFiles.push_back(dirent.path());
+        else if (filename.find("data-log") != std::string::npos &&
+                filename.find("merged") == std::string::npos) dataFiles.push_back(dirent.path());
+    }
+
+    std::sort(metadataFiles.begin(), metadataFiles.end());
+    std::sort(dataFiles.begin(), dataFiles.end());
     
-    /*
+    std::cout << "bufferFolder: " << bufferFolder << '\n';
     std::cout << "metadataFiles: ";
     for (auto& file : metadataFiles) std::cout << file << ", ";
     std::cout << "\ndataFiles: ";
     for (auto& file : dataFiles) std::cout << file << ", ";
     std::cout << "\noutMetadataFile: " << outMetadataFile << "\noutDataFile: " << outDataFile << '\n';
-    */
 
     std::vector<m_chunk*> metadata = std::vector<m_chunk*>(metadataFiles.size(), nullptr);
     for(int i = 0; i != metadata.size(); ++i) {
-        metadata[i] = static_cast<m_chunk*>(mapFile(metadataFiles[i]));
+        metadata[i] = static_cast<m_chunk*>(mapFile(metadataFiles[i], M_CHUNK_COUNT * sizeof(m_chunk), false));
     }
 
     std::vector<void*> data = std::vector<void*>(dataFiles.size(), nullptr);
     for(int i = 0; i != data.size(); ++i) {
-        data[i] = mapFile(dataFiles[i]);
+        data[i] = mapFile(dataFiles[i], maxDataSize, false);
     }
 
-    void* outData = mapFile(outDataFile);
+    void* outData = mapFile(outDataFile, maxDataSize, true);
 
     std::vector<int> startIndices = std::vector<int>(dataFiles.size(), 0);
     std::vector<int> endIndices = std::vector<int>(dataFiles.size(), M_CHUNK_COUNT);
@@ -83,10 +104,29 @@ int main(int argc, char** argv) {
 
     std::ofstream out{outFile};
 
+    std::cout << "Merging data...\n";
     Merger merger = MergeData(metadata, data, startIndices, endIndices,
-            outData, curEndOffset, 131072, out);
+            outData, curEndOffset, maxDataSize, out);
+    merger.debugLog();
+    std::cout << "Merge complete.\n";
 
-    // write out metadata (not done because normally this stays in memory)
+    std::cout << "Writing data...\n";
+    // do final write
+    std::vector<char> buffer;
+    for(auto& item : merger.getItems()) {
+        auto& logItem = item.getLogItems()[0];
+        buffer.resize(item.getLength());
+        std::memcpy(buffer.data(), static_cast<char*>(outData) + logItem.item.data_offset,
+                item.getLength());
+        out.seekp(logItem.item.target_offset);
+        out.write(buffer.data(), item.getLength());
+    }
+
+    out.close();
+    std::cout << "Write complete.\n";
+
+    if(outMetadataFile == "") return 0;
+    std::cout << "Out metadata file specified, logging merged metadata.\n";
     std::vector<m_chunk> outChunks = std::vector<m_chunk>(M_CHUNK_COUNT, m_chunk{});
     for(int curChunk = 0; curChunk != outChunks.size(); ++curChunk) {
         auto& chunk = outChunks[curChunk];

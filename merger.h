@@ -10,9 +10,9 @@ class Merger {
 public:
     explicit Merger(std::size_t initialBackingSize);
     // may leave item in a "moved from" state
-    void addItem(const m_item& item, void* data, uint64_t length);
+    void addItem(const m_item& item, void* data, uint64_t length, int maxDataSize);
     void addItemNoMerge(const m_item& item, void* data, uint64_t length);
-    void mergeAll();
+    void mergeAll(int maxSize);
     void clear();
 
     void debugLog() const;
@@ -28,7 +28,7 @@ private:
 Merger MergeData(const std::vector<m_chunk*>& sourceMetadata,
         const std::vector<void*>& sourceData,
         const std::vector<int>& leadingChunks, const std::vector<int>& endChunks,
-        void* outData, int& curOutOffset, int maxSize,
+        void* outData, int& curOutOffset, int maxDataSize,
         std::ofstream& fileOut);
 
 #endif
